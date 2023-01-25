@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <div id="app">
+        <input v-model="name" type="text" />
+        <div style="margin: 20px 0 20px 0;" v-html="name"></div>
+        <button v-html="name" @click="changeit">更改name</button>
+    </div>
+</body>
+
+</html>
+
+<script>
+    // 每个指令，解析出来都是一个对象，拥有很多属性和方法
+    // {
+    //     allVal: { }, // 根实例的$data
+    //     key: '', // 对应的属性名
+    //     directive: [], // 指令
+    //     node: {}, // dom节点
+    //     update: () => {}, // 更新的方法
+    // }
+</script>
+
+<script>
+    // vue 的发布订阅，mvvm框架
+
+    // 收集listener ，并循环执行
+    class Dep {
+        constructor() {
+            this.listener = [];
+        }
+
+        add(obj) {
+            this.listener.push(obj);
+        }
+
+        notify() {
+            this.listener.forEach(item => item.update());
+        }
+
+    }
+
+    // 订阅器
+    class Watcher {
+        constructor(options) {
+            this.update = options.update;
+
+            Dep.target = this;
+
+            // 因为数据劫持过，所以劫持就会触发它的getter，就把this加入到listener里了
+            this.val = options.allVal[options.key];
+
+            Dep.target = null;
+        }
+    }
+
+    class Vue {
+        constructor(options) {
+            this.$options = options
+            this.$data = options.data()
+            // 劫持根实例和data实例
+            this.observeRoot();
+            this.observeData(this.$data);
+
+            //创建节点
+            this.createFragment();
+
+            // 编译模版
+            this.compile();
+
+        }
+
+
+        observeRoot() {
+            // 实现双向数据绑定，依赖Object.defineProperty
+            Object.keys(this.$data).forEach(item => {
+                let _val = this[item];
+                Object.defineProperty(this, item, {
+                    enumerable: true, //是否可以遍历这个属性 
+                    configurable: false, // 是否可以再次配置
+                    get: function () {
+                        console.log("==>getting");
+                        return this.$data[item];
+                    },
+                    set: function (newVal) {
+                        console.log("==>setting");
+                        this.$data[item] && (this.$data[item] = newVal)
+                    }
+                })
+                window.xx = this;
+            })
+        }
+
+        observeData(obj) {
+            if (!obj || typeof obj !== 'object') {
+                return;
+            }
+            Object.keys(obj).forEach((item) => {
+                var val = obj[item];
+                // 如果是个对象，说明是个嵌套对象
+                if (typeof val === 'object') {
+                    this.observeData(val);
+                } else {
+
+                    let dep = new Dep();
+
+                    Object.defineProperty(obj, item, {
+                        enumerable: true,
+                        configurable: false,
+                        get: function () {
+                            // 只要实例化VUE，每个属性上都有一个dep
+                            Dep.target && dep.add(Dep.target);
+                            console.log("读取数据");
+                            return val;
+                        },
+                        set: function (newVal) {
+                            console.log("设置数据");
+                            val = newVal;
+                            // 调用notify触发数据更新
+                            dep.notify();
+                        }
+
+                    })
+                }
+            })
+        }
+
+        createFragment() {
+            this.$el = document.querySelector(this.$options.el);
+            this.$fragment = document.createDocumentFragment();
+
+            while (this.$el.firstChild) {
+                this.$fragment.appendChild(this.$el.firstChild);
+            }
+        }
+        compile() {
+            this._compileElement(this.$fragment);
+            this.$el.appendChild(this.$fragment);
+        }
+
+        _compileElement(ele) {
+            // 循环编译节点
+            Array.from(ele.childNodes).forEach(item => {
+                this._compileNode(item);
+                if (item.childNodes) {
+                    this._compileElement(item);
+                }
+            })
+        }
+
+        _compileNode(node) {
+            // 编译节点，获取指令信息
+            let res = this._checkHasBind(node);
+
+            // 分析处理指令
+            this._resolveBind(node, res);
+        }
+
+        _checkHasBind(node) {
+            // 查对象身上所有的属性、指令
+            let attributes = node.attributes;
+            let dir_reg = /^v\-\w*$/
+            let event_reg = /^\@\w*$/
+            let content_reg = /\{\{[\s\S]*\}\}/
+
+            const result = {
+                directives: [],
+                events: [],
+                content: '',
+            }
+
+            if (attributes) {
+                Array.from(attributes).forEach(item => {
+                    // 解析指令
+                    if (dir_reg.test(item.name)) {
+                        result.directives.push({ name: item.name, value: item.value })
+                    }
+
+                    // 解析事件
+                    if (event_reg.test(item.name)) {
+                        result.events.push({
+                            name: item.name,
+                            value: item.value,
+                        })
+                    }
+                })
+            }
+            console.log("==>result", result);
+            return result;
+        }
+
+        _resolveBind(node, res) {
+            let _this = this;
+            let data = this.$data;
+            let { directives, events } = res;
+
+            // 处理所有指令和事件
+
+
+            directives.length && directives.forEach(item => {
+                let update = function () {
+                    switch (item.name) {
+                        case 'v-model':
+                            // 双向数据绑定，onInput的时候，修改this的值
+                            node.oninput = (val) => {
+                                _this[item.value] = node.value;
+                            }
+                            // this的值也可以修改node
+                            node.value = data[item.value];
+                            break;
+                        case 'v-html':
+                            node.innerHtml = data[item.value];
+                            break;
+                        default:
+                            break;
+                    }
+                }
+                let watch_options = {
+                    allVal: this.$data,
+                    key: item.value,
+                    directive: item.name,
+                    update,
+                    node,
+                }
+                console.log("--->watch", watch_options);
+                // 每解析一个指令，就new 一下 watcher，这样就监听到了所有指令
+                new Watcher(watch_options);
+                update();
+            })
+
+            // 处理所有事件
+            events.length && events.forEach((item) => {
+                let method_name = item.value;
+                // 拿到的事件是带@的，需要处理一下
+                let target_event = item.name.slice(1);
+                console.log("==>targetEvent", target_event, this.$options.methods);
+                node.addEventListener(target_event, () => {
+                    this.$options.methods[method_name].call(this)
+                })
+            })
+        }
+
+    }
+</script>
+
+<script>
+    let app = new Vue({
+        el: '#app',
+        data() {
+            return {
+                name: 'xiaoming',
+            }
+        },
+        methods: {
+            changeit() {
+                this.name = Math.random();
+            }
+        }
+    })
+</script>
